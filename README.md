@@ -4,7 +4,14 @@
 
 ## 使用
 
-先安装 GIF 读取依赖：
+建议先创建并启用 Python 虚拟环境：
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+```
+
+然后安装 GIF 读取依赖：
 
 ```bash
 python3 -m pip install -r requirements.txt
