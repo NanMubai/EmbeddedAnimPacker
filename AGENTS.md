@@ -85,6 +85,7 @@ python3 EmbeddedAnimPacker.py --help
 
 - 不要提交 `.venv/`、`frames/`、`littlefs/anim/`、`lvgl/`、缓存目录或本地编辑器文件。
 - Commit messages must be written in English and follow Conventional Commits 1.0.0, for example `feat: add frame prefix option` or `fix: validate GIF input path`.
+- Version numbers must follow Semantic Versioning 2.0.0.
 - 如果需要新增示例输入素材，确认文件大小合理，并在 `README.md` 中说明用途。
 - 如果修改默认输出位置、颜色格式或压缩格式，请同步检查 `.gitignore` 和文档。
 
