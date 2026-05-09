@@ -1,0 +1,40 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments and local environment files
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Packaging and build output
+build/
+dist/
+*.egg-info/
+
+# Generated animation conversion output
+frames/
+littlefs/anim/
+
+# Local LVGL checkout used by the converter
+lvgl/
+
+# Editor and OS noise
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Local Codex/agent workspace metadata
+.agents/
+.codex/
