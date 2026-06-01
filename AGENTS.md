@@ -11,12 +11,17 @@
 3. 调用本地 LVGL 仓库中的 `scripts/LVGLImage.py`。
 4. 生成适合放入 LittleFS 的 LVGL BIN 图片文件。
 
-主入口是 `EmbeddedAnimPacker.py`。
+主入口是 `EmbeddedAnimPacker.py`，提供两种用法：
+
+- **命令行**：传入 GIF 与参数，行为与脚本最初版本一致。
+- **交互式菜单**：不带 GIF 参数（或传 `-i`/`--interactive`）时进入，基于 `questionary` 选择素材并配置参数。
+
+两条路径都汇聚到同一个 `run_conversion(ConversionConfig)` 管线，避免逻辑重复。
 
 ## 重要文件
 
 - `EmbeddedAnimPacker.py`: CLI 主程序。
-- `requirements.txt`: Python 运行依赖，目前只有 `Pillow`。
+- `requirements.txt`: Python 运行依赖：`Pillow`（读取 GIF）与 `questionary`（交互式菜单）。
 - `README.md`: 面向用户的使用说明。
 - `default.gif`: 示例输入素材。
 - `frames/`: `--keep-frames` 生成的中间 PNG 帧，通常不要提交。
@@ -43,7 +48,14 @@ python3 -m pip install -r requirements.txt
 python3 -m pip install -r requirements.txt
 ```
 
-运行转换：
+进入交互式菜单（不带 GIF 参数，或显式加 `-i`）：
+
+```bash
+python3 EmbeddedAnimPacker.py
+python3 EmbeddedAnimPacker.py -i
+```
+
+运行转换（命令行）：
 
 ```bash
 python3 EmbeddedAnimPacker.py default.gif
@@ -80,6 +92,8 @@ python3 EmbeddedAnimPacker.py --help
 - 调用外部命令时使用参数列表，不拼接 shell 字符串。
 - 默认行为应避免留下临时文件；只有用户传入 `--keep-frames` 时才保留中间 PNG。
 - 不要引入重量级依赖，除非能明显简化核心流程。
+- `questionary` 只在 `run_interactive_menu()` 内部按需导入；纯命令行路径不得依赖它，缺失时给出清晰安装提示。
+- 新增转换参数时，同步加到 `ConversionConfig`、命令行参数和交互式菜单三处，并更新 `README.md`。
 
 ## 版本控制注意事项
 
@@ -99,3 +113,5 @@ python3 EmbeddedAnimPacker.py --help
 ```
 
 有完整 LVGL 环境时，使用小 GIF 做一次端到端转换，并检查输出目录中的 `.bin` 文件数量是否等于 GIF 帧数。
+
+交互式菜单需要真实 TTY 才能运行（`questionary` 基于 `prompt_toolkit`），不便用管道自动化。无 TTY 时可单独调用 `discover_gifs()` 和 `run_conversion(ConversionConfig(...))` 验证非交互逻辑。
