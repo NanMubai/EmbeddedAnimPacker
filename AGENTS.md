@@ -14,9 +14,9 @@
 主入口是 `EmbeddedAnimPacker.py`，提供两种用法：
 
 - **命令行**：传入 GIF 与参数，行为与脚本最初版本一致。
-- **交互式菜单**：不带 GIF 参数（或传 `-i`/`--interactive`）时进入，基于 `questionary` 选择素材并配置参数。
+- **交互式菜单**：不带 GIF 参数（或传 `-i`/`--interactive`）时进入，基于 `questionary` 选择素材并配置参数。`_select_gifs()` 采用两步式选择，返回 GIF 列表，支持多选 / 一键全选 / 手动输入路径。
 
-两条路径都汇聚到同一个 `run_conversion(ConversionConfig)` 管线，避免逻辑重复。
+两条路径都汇聚到同一个 `run_conversion(ConversionConfig)` 单 GIF 管线。命令行直接调用它；菜单经 `run_conversions(gifs, template)` 逐个调用（continue-on-error，末尾打印聚合结果），且多选时强制用各 GIF 自身 stem 作帧前缀以避免冲突。
 
 ## 重要文件
 

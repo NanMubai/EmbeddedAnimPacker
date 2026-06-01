@@ -19,7 +19,7 @@ python3 -m pip install -r requirements.txt
 
 ## 交互式菜单
 
-不带任何参数运行，会进入交互式菜单：可以从当前目录选择源 GIF、逐项配置参数，最后确认并执行转换：
+不带任何参数运行，会进入交互式菜单：从当前目录选择源 GIF（支持**多选或一键全选**，批量转换）、逐项配置参数，最后确认并执行转换：
 
 ```bash
 python3 EmbeddedAnimPacker.py

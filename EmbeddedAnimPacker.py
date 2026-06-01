@@ -5,7 +5,7 @@ import contextlib
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 
@@ -197,6 +197,34 @@ def run_conversion(cfg: ConversionConfig) -> int:
     return 0
 
 
+def run_conversions(gifs: list[Path], template: ConversionConfig) -> int:
+    """Convert each GIF using ``template``'s shared parameters.
+
+    With more than one GIF the per-GIF stem is always used as the frame prefix
+    (so frames from different GIFs never collide). A failure on one GIF is
+    reported and the rest still run.
+    """
+    multi = len(gifs) > 1
+    failures: list[Path] = []
+    for gif in gifs:
+        cfg = replace(template, gif=gif, prefix=None if multi else template.prefix)
+        try:
+            run_conversion(cfg)
+        except Exception as exc:  # noqa: BLE001 - keep batch going, report at end
+            print(f"Error: {gif}: {exc}", file=sys.stderr)
+            failures.append(gif)
+
+    if multi:
+        print(
+            f"\nBatch complete: {len(gifs) - len(failures)}/{len(gifs)} "
+            f"GIF(s) converted to {template.output_dir}."
+        )
+        for gif in failures:
+            print(f"  failed: {gif}", file=sys.stderr)
+
+    return 1 if failures else 0
+
+
 # --------------------------------------------------------------------------- #
 # Interactive menu
 # --------------------------------------------------------------------------- #
@@ -219,31 +247,58 @@ def discover_gifs() -> list[Path]:
     return sorted(Path.cwd().glob("*.gif"))
 
 
-def _select_gif(questionary) -> Path:
+def _validate_gif(candidate: Path, questionary) -> bool:
+    if candidate.is_file() and candidate.suffix.lower() == ".gif":
+        return True
+    questionary.print(f"无效的 GIF 文件：{candidate}", style="bold fg:red")
+    return False
+
+
+def _select_gifs(questionary) -> list[Path]:
+    """Two-step source selection: pick a mode, then the GIF(s).
+
+    Returns a non-empty list of GIF paths, or raises _MenuCancelled on quit.
+    """
+    pick = "勾选多个 GIF"
     manual = "✏️  手动输入路径…"
     quit_choice = "退出"
     while True:
-        by_name = {gif.name: gif for gif in discover_gifs()}
-        if not by_name:
+        gifs = discover_gifs()
+        if gifs:
+            all_choice = f"全部 {len(gifs)} 个 GIF"
+            choices = [pick, all_choice, manual, quit_choice]
+        else:
             questionary.print(
                 "当前目录没有找到 .gif 文件，请手动输入路径。", style="fg:yellow"
             )
-        answer = _ask(
-            questionary.select(
-                "选择源 GIF（当前目录）：",
-                choices=[*by_name, manual, quit_choice],
+            all_choice = None
+            choices = [manual, quit_choice]
+
+        mode = _ask(questionary.select("选择源 GIF：", choices=choices))
+
+        if mode == quit_choice:
+            raise _MenuCancelled
+
+        if mode == manual:
+            candidate = Path(_ask(questionary.path("GIF 路径："))).expanduser()
+            if _validate_gif(candidate, questionary):
+                return [candidate]
+            continue
+
+        if mode == all_choice:
+            return gifs
+
+        # mode == pick: multi-select via checkbox
+        selected = _ask(
+            questionary.checkbox(
+                "空格勾选，回车确认：",
+                choices=[questionary.Choice(gif.name, value=gif) for gif in gifs],
             )
         )
-        if answer == quit_choice:
-            raise _MenuCancelled
-        if answer == manual:
-            candidate = Path(_ask(questionary.path("GIF 路径："))).expanduser()
-        else:
-            candidate = by_name[answer]
-
-        if candidate.is_file() and candidate.suffix.lower() == ".gif":
-            return candidate
-        questionary.print(f"无效的 GIF 文件：{candidate}", style="bold fg:red")
+        if not selected:
+            questionary.print("请至少选择一个 GIF。", style="fg:yellow")
+            continue
+        return selected
 
 
 def run_interactive_menu() -> int:
@@ -261,7 +316,8 @@ def run_interactive_menu() -> int:
     print("=== EmbeddedAnimPacker 交互式菜单 ===")
 
     try:
-        gif = _select_gif(questionary)
+        gifs = _select_gifs(questionary)
+        single = len(gifs) == 1
 
         lvgl_dir = _ask(
             questionary.path("LVGL 目录：", default=str(DEFAULT_LVGL_DIR))
@@ -290,9 +346,11 @@ def run_interactive_menu() -> int:
             )
         )
 
-        prefix = _ask(
-            questionary.text("帧文件名前缀（留空使用 GIF 文件名）：", default="")
-        ).strip() or None
+        prefix = None
+        if single:
+            prefix = _ask(
+                questionary.text("帧文件名前缀（留空使用 GIF 文件名）：", default="")
+            ).strip() or None
 
         keep_frames: Path | None = None
         if _ask(questionary.confirm("保留中间 PNG 帧？", default=False)):
@@ -300,8 +358,8 @@ def run_interactive_menu() -> int:
                 _ask(questionary.path("帧输出目录：", default="frames"))
             ).expanduser()
 
-        cfg = ConversionConfig(
-            gif=gif,
+        template = ConversionConfig(
+            gif=gifs[0],
             lvgl_dir=Path(lvgl_dir).expanduser(),
             output_dir=Path(output_dir).expanduser(),
             color_format=color_format,
@@ -311,13 +369,18 @@ def run_interactive_menu() -> int:
         )
 
         print("\n--- 配置汇总 ---")
-        print(f"  源 GIF    : {cfg.gif}")
-        print(f"  LVGL 目录 : {cfg.lvgl_dir}")
-        print(f"  输出目录  : {cfg.output_dir}")
-        print(f"  颜色格式  : {cfg.color_format}")
-        print(f"  压缩方式  : {cfg.compress}")
-        print(f"  帧前缀    : {cfg.prefix or cfg.gif.stem}")
-        print(f"  保留帧    : {cfg.keep_frames or '否（使用临时目录）'}")
+        if single:
+            print(f"  源 GIF    : {gifs[0]}")
+        else:
+            print(f"  源 GIF    : {len(gifs)} 个")
+            for gif in gifs:
+                print(f"             - {gif.name}")
+        print(f"  LVGL 目录 : {template.lvgl_dir}")
+        print(f"  输出目录  : {template.output_dir}")
+        print(f"  颜色格式  : {template.color_format}")
+        print(f"  压缩方式  : {template.compress}")
+        print(f"  帧前缀    : {template.prefix or gifs[0].stem if single else '各 GIF 文件名'}")
+        print(f"  保留帧    : {template.keep_frames or '否（使用临时目录）'}")
         print("----------------")
 
         if not _ask(questionary.confirm("确认开始转换？", default=True)):
@@ -326,7 +389,7 @@ def run_interactive_menu() -> int:
         print("已取消。")
         return 0
 
-    return run_conversion(cfg)
+    return run_conversions(gifs, template)
 
 
 def main() -> int:
