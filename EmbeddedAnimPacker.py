@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 DEFAULT_LVGL_DIR = Path("lvgl")
 DEFAULT_OUTPUT_DIR = Path("littlefs/anim")
@@ -30,6 +30,10 @@ class ConversionConfig:
     compress: str = DEFAULT_COMPRESS
     prefix: str | None = None
     keep_frames: Path | None = None
+    frame_start: int = 0
+    frame_end: int | None = None
+    frame_step: int = 1
+    frame_count: int | None = None
     python: str = sys.executable
 
 
@@ -88,6 +92,31 @@ def parse_args() -> argparse.Namespace:
         help="Keep extracted PNG frames in this directory instead of using a temp directory.",
     )
     parser.add_argument(
+        "--frame-start",
+        type=int,
+        default=0,
+        help="First GIF frame index to keep (inclusive). Default: 0.",
+    )
+    parser.add_argument(
+        "--frame-end",
+        type=int,
+        default=None,
+        help="Last GIF frame index to keep (inclusive). Default: last frame.",
+    )
+    sampling = parser.add_mutually_exclusive_group()
+    sampling.add_argument(
+        "--frame-step",
+        type=int,
+        default=1,
+        help="Keep every Nth frame within the range (decimation). Default: 1 (all).",
+    )
+    sampling.add_argument(
+        "--frame-count",
+        type=int,
+        default=None,
+        help="Evenly sample this many frames from the range (overrides --frame-step).",
+    )
+    parser.add_argument(
         "--python",
         default=sys.executable,
         help="Python executable used to run LVGLImage.py. Default: current interpreter.",
@@ -114,7 +143,73 @@ def require_valid_input(gif_path: Path, lvgl_dir: Path) -> Path:
     return converter
 
 
-def extract_gif_frames(gif_path: Path, output_dir: Path, prefix: str) -> list[Path]:
+def select_frame_indices(
+    total: int,
+    start: int = 0,
+    end: int | None = None,
+    step: int = 1,
+    count: int | None = None,
+) -> list[int]:
+    """Return the original frame indices to keep (ascending, de-duplicated).
+
+    The default ``(0, None, 1, None)`` keeps every frame. The range ``[start,
+    end]`` is applied first; then ``count`` (evenly spaced sampling) takes
+    precedence over ``step`` (every-Nth decimation) when both are given.
+    """
+    if total <= 0:
+        return []
+    end = total - 1 if end is None else min(end, total - 1)
+    start = max(0, start)
+    if start > end:
+        raise ValueError(f"帧区间无效：start={start} > end={end}（共 {total} 帧）")
+
+    candidates = list(range(start, end + 1))
+
+    if count is not None:
+        if count < 1:
+            raise ValueError("目标帧数必须 ≥ 1")
+        if count >= len(candidates):
+            return candidates
+        if count == 1:
+            return [candidates[0]]
+        n = len(candidates)
+        picked = [candidates[round(i * (n - 1) / (count - 1))] for i in range(count)]
+        return sorted(set(picked))  # de-dup in case neighbouring picks round equal
+
+    if step < 1:
+        raise ValueError("步长必须 ≥ 1")
+    return candidates[::step]
+
+
+def _describe_sampling(cfg: ConversionConfig) -> str:
+    """One-line, human-readable summary of a config's frame-sampling options."""
+    if (
+        cfg.frame_start == 0
+        and cfg.frame_end is None
+        and cfg.frame_step == 1
+        and cfg.frame_count is None
+    ):
+        return "否（全部帧）"
+    rng = f"[{cfg.frame_start}..{'末' if cfg.frame_end is None else cfg.frame_end}]"
+    if cfg.frame_count is not None:
+        how = f"均匀抽 {cfg.frame_count} 帧"
+    elif cfg.frame_step != 1:
+        how = f"步长 {cfg.frame_step}"
+    else:
+        how = "全部"
+    return f"区间 {rng}，{how}"
+
+
+def extract_gif_frames(
+    gif_path: Path,
+    output_dir: Path,
+    prefix: str,
+    *,
+    start: int = 0,
+    end: int | None = None,
+    step: int = 1,
+    count: int | None = None,
+) -> list[Path]:
     try:
         from PIL import Image, ImageSequence
     except ImportError as exc:
@@ -127,10 +222,21 @@ def extract_gif_frames(gif_path: Path, output_dir: Path, prefix: str) -> list[Pa
     frame_paths: list[Path] = []
 
     with Image.open(gif_path) as gif:
-        for index, frame in enumerate(ImageSequence.Iterator(gif)):
-            frame_path = output_dir / f"{prefix}_{index:04d}.png"
+        total = getattr(gif, "n_frames", 1)
+        keep = set(select_frame_indices(total, start, end, step, count))
+        if not keep:
+            raise RuntimeError("抽帧后没有剩余帧，请检查区间/步长/目标帧数。")
+
+        # Re-number kept frames contiguously (0000, 0001, ...) so LVGL's
+        # sequential player never sees a gap in the frame indices.
+        out_index = 0
+        for src_index, frame in enumerate(ImageSequence.Iterator(gif)):
+            if src_index not in keep:
+                continue
+            frame_path = output_dir / f"{prefix}_{out_index:04d}.png"
             frame.convert("RGBA").save(frame_path)
             frame_paths.append(frame_path)
+            out_index += 1
 
     if not frame_paths:
         raise RuntimeError(f"No frames found in GIF: {gif_path}")
@@ -182,7 +288,15 @@ def run_conversion(cfg: ConversionConfig) -> int:
                 )
             )
 
-        frame_paths = extract_gif_frames(cfg.gif, frame_dir, prefix)
+        frame_paths = extract_gif_frames(
+            cfg.gif,
+            frame_dir,
+            prefix,
+            start=cfg.frame_start,
+            end=cfg.frame_end,
+            step=cfg.frame_step,
+            count=cfg.frame_count,
+        )
         for frame_path in frame_paths:
             convert_frame(
                 frame_path,
@@ -301,6 +415,57 @@ def _select_gifs(questionary) -> list[Path]:
         return selected
 
 
+def _ask_int(questionary, message: str, default: str) -> int | None:
+    """Prompt for an optional integer; an empty answer returns None."""
+    while True:
+        raw = _ask(questionary.text(message, default=default)).strip()
+        if raw == "":
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            questionary.print(f"请输入整数：{raw!r}", style="fg:red")
+
+
+def _ask_frame_sampling(questionary) -> tuple[int, int | None, int, int | None]:
+    """Ask whether / how to sample frames. Returns (start, end, step, count)."""
+    if not _ask(
+        questionary.confirm("是否抽帧（截取片段 / 减少帧数）？", default=False)
+    ):
+        return 0, None, 1, None
+
+    keep_all = "保留区间内全部帧"
+    by_step = "按步长隔帧（每 N 帧取 1）"
+    by_count = "按目标帧数均匀抽（共 N 帧）"
+    while True:
+        start = _ask_int(questionary, "起始帧（含，默认 0）：", "0") or 0
+        end = _ask_int(questionary, "结束帧（含，留空=末帧）：", "")
+        if start < 0 or (end is not None and end < start):
+            questionary.print(f"帧区间无效：start={start}, end={end}", style="fg:red")
+            continue
+
+        method = _ask(
+            questionary.select(
+                "区间内如何抽帧：",
+                choices=[keep_all, by_step, by_count],
+                default=keep_all,
+            )
+        )
+        if method == keep_all:
+            return start, end, 1, None
+        if method == by_step:
+            step = _ask_int(questionary, "步长 N（≥1）：", "2")
+            if step is None or step < 1:
+                questionary.print("步长必须 ≥ 1。", style="fg:red")
+                continue
+            return start, end, step, None
+        count = _ask_int(questionary, "目标帧数 N（≥1）：", "8")
+        if count is None or count < 1:
+            questionary.print("目标帧数必须 ≥ 1。", style="fg:red")
+            continue
+        return start, end, 1, count
+
+
 def run_interactive_menu() -> int:
     try:
         import questionary
@@ -346,6 +511,10 @@ def run_interactive_menu() -> int:
             )
         )
 
+        frame_start, frame_end, frame_step, frame_count = _ask_frame_sampling(
+            questionary
+        )
+
         prefix = None
         if single:
             prefix = _ask(
@@ -366,6 +535,10 @@ def run_interactive_menu() -> int:
             compress=compress,
             prefix=prefix,
             keep_frames=keep_frames,
+            frame_start=frame_start,
+            frame_end=frame_end,
+            frame_step=frame_step,
+            frame_count=frame_count,
         )
 
         print("\n--- 配置汇总 ---")
@@ -381,6 +554,7 @@ def run_interactive_menu() -> int:
         print(f"  压缩方式  : {template.compress}")
         print(f"  帧前缀    : {template.prefix or gifs[0].stem if single else '各 GIF 文件名'}")
         print(f"  保留帧    : {template.keep_frames or '否（使用临时目录）'}")
+        print(f"  抽帧      : {_describe_sampling(template)}")
         print("----------------")
 
         if not _ask(questionary.confirm("确认开始转换？", default=True)):
@@ -406,6 +580,10 @@ def main() -> int:
         compress=args.compress,
         prefix=args.prefix,
         keep_frames=args.keep_frames,
+        frame_start=args.frame_start,
+        frame_end=args.frame_end,
+        frame_step=args.frame_step,
+        frame_count=args.frame_count,
         python=args.python,
     )
     return run_conversion(cfg)

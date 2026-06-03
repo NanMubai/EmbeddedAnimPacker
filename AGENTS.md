@@ -7,7 +7,7 @@
 `EmbeddedAnimPacker` 是一个 Python 命令行工具，用于：
 
 1. 读取输入 GIF。
-2. 使用 Pillow 拆分为逐帧 PNG。
+2. 使用 Pillow 拆分为逐帧 PNG，可选抽帧（帧区间 / 隔帧步长 / 目标帧数），输出帧从 0 连续重编号。
 3. 调用本地 LVGL 仓库中的 `scripts/LVGLImage.py`。
 4. 生成适合放入 LittleFS 的 LVGL BIN 图片文件。
 
@@ -75,6 +75,14 @@ python3 EmbeddedAnimPacker.py default.gif \
 
 ```bash
 python3 EmbeddedAnimPacker.py default.gif --keep-frames ./frames
+```
+
+抽帧 / 减帧（区间、隔帧、目标帧数；`--frame-step` 与 `--frame-count` 互斥）：
+
+```bash
+python3 EmbeddedAnimPacker.py default.gif --frame-step 2          # 隔帧减半
+python3 EmbeddedAnimPacker.py default.gif --frame-start 0 --frame-end 11  # 只取前半段
+python3 EmbeddedAnimPacker.py default.gif --frame-count 8         # 均匀抽成 8 帧
 ```
 
 只检查 CLI 参数和基础语法时，可运行：

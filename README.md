@@ -52,3 +52,44 @@ python3 EmbeddedAnimPacker.py boot.gif \
 ```bash
 python3 EmbeddedAnimPacker.py boot.gif --keep-frames ./frames
 ```
+
+## 抽帧 / 减帧
+
+嵌入式场景下每一帧都是占 flash / RAM 的 `.bin`，可以用下面的选项**截取片段**或
+**减少帧数**。抽帧只决定哪些帧被送去转 BIN，输出帧始终从 `0000` **连续重新编号**
+（不会留空洞，方便 LVGL 顺序播放）。
+
+| 选项 | 含义 |
+| --- | --- |
+| `--frame-start N` | 起始帧（含），默认 `0` |
+| `--frame-end N` | 结束帧（含），默认末帧 |
+| `--frame-step N` | 区间内每 N 帧取 1（隔帧减帧），默认 `1`（全保留） |
+| `--frame-count N` | 区间内均匀抽 N 帧；与 `--frame-step` **互斥**，给定时优先 |
+
+隔帧减半（12 帧 → 6 帧）：
+
+```bash
+python3 EmbeddedAnimPacker.py boot.gif --frame-step 2
+```
+
+只取前半段（第 0–11 帧）：
+
+```bash
+python3 EmbeddedAnimPacker.py boot.gif --frame-start 0 --frame-end 11
+```
+
+把任意帧数均匀抽成固定 8 帧：
+
+```bash
+python3 EmbeddedAnimPacker.py boot.gif --frame-count 8
+```
+
+组合使用，并保留抽完的 PNG 以便预览：
+
+```bash
+python3 EmbeddedAnimPacker.py boot.gif --frame-start 0 --frame-end 11 --frame-step 2 \
+  --keep-frames ./frames
+```
+
+> 多选 / 全选批量转换时，同一套抽帧参数会套用到所有 GIF；固定的 `--frame-end`
+> 在较短的 GIF 上会自动收敛到其末帧。交互式菜单里也有对应的「是否抽帧」步骤。
